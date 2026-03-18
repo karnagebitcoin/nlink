@@ -14,23 +14,57 @@ import { useI18n } from "@/lib/i18n/context";
 import { toast } from "sonner";
 
 type SearchResult = ProfileSearchResult;
+const SEARCH_DEBOUNCE_MS = 180;
+const SEARCH_RESULT_CACHE_TTL_MS = 30_000;
+const searchResultCache = new Map<string, { expiresAt: number; results: SearchResult[] }>();
+const inflightSearches = new Map<string, Promise<SearchResult[]>>();
+
+function getSearchCacheKey(searchTerm: string): string {
+  return searchTerm.trim().toLowerCase();
+}
 
 async function searchProfiles(searchTerm: string): Promise<SearchResult[]> {
-  try {
-    const searchParams = new URLSearchParams({
-      limit: "10",
-      q: searchTerm,
-    });
-    const response = await fetch(`/api/search-profiles?${searchParams.toString()}`, {
-      cache: "no-store",
-    });
+  const cacheKey = getSearchCacheKey(searchTerm);
+  const cached = searchResultCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.results;
+  }
 
-    if (!response.ok) {
+  const inflight = inflightSearches.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    try {
+      const searchParams = new URLSearchParams({
+        limit: "10",
+        q: searchTerm,
+      });
+      const response = await fetch(`/api/search-profiles?${searchParams.toString()}`);
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = (await response.json()) as { results?: SearchResult[] };
+      const results = data.results ?? [];
+      searchResultCache.set(cacheKey, {
+        expiresAt: Date.now() + SEARCH_RESULT_CACHE_TTL_MS,
+        results,
+      });
+      return results;
+    } catch {
       return [];
+    } finally {
+      inflightSearches.delete(cacheKey);
     }
+  })();
 
-    const data = (await response.json()) as { results?: SearchResult[] };
-    return data.results ?? [];
+  inflightSearches.set(cacheKey, request);
+
+  try {
+    return await request;
   } catch {
     return [];
   }
@@ -48,6 +82,7 @@ export function SearchAutocomplete() {
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const searchRequestIdRef = useRef(0);
 
   // Check if input looks like a special identifier (not a username search)
   const isSpecialIdentifier = useCallback((input: string) => {
@@ -70,10 +105,15 @@ export function SearchAutocomplete() {
 
     // Don't search if empty, too short, or looks like a special identifier
     if (!searchTerm || searchTerm.length < 2 || isSpecialIdentifier(trimmed)) {
+      searchRequestIdRef.current += 1;
       setResults([]);
       setShowDropdown(false);
+      setSearching(false);
       return;
     }
+
+    const requestId = searchRequestIdRef.current + 1;
+    searchRequestIdRef.current = requestId;
 
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -84,14 +124,22 @@ export function SearchAutocomplete() {
       setShowDropdown(true);
       try {
         const profiles = await searchProfiles(searchTerm);
+        if (searchRequestIdRef.current !== requestId) {
+          return;
+        }
         setResults(profiles);
       } catch (error) {
         console.error("Search error:", error);
+        if (searchRequestIdRef.current !== requestId) {
+          return;
+        }
         setResults([]);
       } finally {
-        setSearching(false);
+        if (searchRequestIdRef.current === requestId) {
+          setSearching(false);
+        }
       }
-    }, 300);
+    }, SEARCH_DEBOUNCE_MS);
 
     return () => {
       if (debounceRef.current) {
@@ -119,6 +167,8 @@ export function SearchAutocomplete() {
   const selectResult = (result: SearchResult) => {
     setShowDropdown(false);
     setQuery("");
+    setResults([]);
+    searchRequestIdRef.current += 1;
     router.push(`/${toNpub(result.pubkey)}`);
   };
 
