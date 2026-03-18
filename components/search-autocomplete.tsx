@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { decodeNip19, resolveNip05, toNpub, toNevent, shortenNpub } from "@/lib/nostr/utils";
 import type { ProfileSearchResult } from "@/lib/nostr/profile-search";
+import { useI18n } from "@/lib/i18n/context";
 import { toast } from "sonner";
 
 type SearchResult = ProfileSearchResult;
@@ -37,6 +38,7 @@ async function searchProfiles(searchTerm: string): Promise<SearchResult[]> {
 
 export function SearchAutocomplete() {
   const router = useRouter();
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -223,7 +225,7 @@ export function SearchAutocomplete() {
           <Input
             ref={inputRef}
             type="text"
-            placeholder="Search by name, npub, note1, or nip-05..."
+            placeholder={t.searchInputPlaceholder}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
