@@ -21,6 +21,102 @@ export interface NostrEvent {
   sig: string;
 }
 
+function isEventTag(tag: string[]): boolean {
+  return tag[0] === "e" && !!tag[1];
+}
+
+function getEmbeddedEventIds(event: NostrEvent): Set<string> {
+  return new Set(
+    parseNostrUris(event.content)
+      .filter((uri) => uri.type === "note" || uri.type === "nevent")
+      .map((uri) => {
+        const decoded = decodeNip19(uri.id);
+        return decoded && typeof decoded.data === "string" ? decoded.data : null;
+      })
+      .filter((eventId): eventId is string => Boolean(eventId))
+  );
+}
+
+export function getParentEventTag(event?: NostrEvent): string[] | undefined {
+  if (!event || event.kind !== 1) return undefined;
+  const embeddedEventIds = getEmbeddedEventIds(event);
+
+  const replyTag = event.tags.find(
+    ([tagName, tagValue, , marker]) => tagName === "e" && !!tagValue && marker === "reply"
+  );
+  if (replyTag) {
+    return replyTag;
+  }
+
+  return [...event.tags]
+    .reverse()
+    .find(
+      ([tagName, tagValue, , marker]) =>
+        tagName === "e" &&
+        !!tagValue &&
+        marker !== "mention" &&
+        !embeddedEventIds.has(tagValue)
+    );
+}
+
+export function getRootEventTag(event?: NostrEvent): string[] | undefined {
+  if (!event || event.kind !== 1) return undefined;
+  const embeddedEventIds = getEmbeddedEventIds(event);
+
+  const rootTag = event.tags.find(
+    ([tagName, tagValue, , marker]) => tagName === "e" && !!tagValue && marker === "root"
+  );
+  if (rootTag) {
+    return rootTag;
+  }
+
+  return event.tags.find(
+    ([tagName, tagValue, , marker]) =>
+      tagName === "e" &&
+      !!tagValue &&
+      marker !== "mention" &&
+      !embeddedEventIds.has(tagValue)
+  );
+}
+
+export function getParentEventId(event?: NostrEvent): string | undefined {
+  return getParentEventTag(event)?.[1];
+}
+
+export function getRootEventId(event?: NostrEvent): string | undefined {
+  return getRootEventTag(event)?.[1];
+}
+
+export function isReplyNoteEvent(event?: NostrEvent): boolean {
+  if (!event || event.kind !== 1) return false;
+  return Boolean(getParentEventId(event));
+}
+
+export function getReplyTargetIds(event?: NostrEvent): string[] {
+  if (!event) return [];
+
+  const targets = new Set<string>();
+  const rootId = getRootEventId(event);
+  const parentId = getParentEventId(event);
+
+  if (rootId) {
+    targets.add(rootId);
+  }
+  if (parentId) {
+    targets.add(parentId);
+  }
+
+  return Array.from(targets);
+}
+
+export function getReactionTargetEventId(event?: NostrEvent): string | undefined {
+  if (!event) return undefined;
+
+  return [...event.tags]
+    .reverse()
+    .find(isEventTag)?.[1];
+}
+
 // Decode any NIP-19 identifier
 export function decodeNip19(input: string): { type: string; data: string | Uint8Array } | null {
   try {

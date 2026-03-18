@@ -24,7 +24,10 @@ import { OpenInClientDialog } from "@/components/open-in-client-dialog";
 import { LinkPreview } from "@/components/link-preview";
 import { NoteScreenshot } from "@/components/note-screenshot";
 import { NoteContent } from "@/components/note-content";
+import { NoteComments } from "@/components/note-comments";
+import { NoteStatsRow } from "@/components/note-stats-row";
 import { toast } from "sonner";
+import { useNoteStats } from "@/hooks/use-note-stats";
 import {
   extractMedia,
   formatTimestamp,
@@ -153,6 +156,7 @@ function NoteView({
   const [loading, setLoading] = useState(!initialEvent);
   const [error, setError] = useState<string | null>(null);
   const [openInClientOpen, setOpenInClientOpen] = useState(false);
+  const noteStats = useNoteStats(event ? [event.id] : []);
 
   useEffect(() => {
     let cancelled = false;
@@ -438,8 +442,18 @@ function NoteView({
               ))}
             </div>
           )}
+
+          <NoteStatsRow
+            stats={noteStats[event.id]}
+            className="mt-4 border-t border-border/50 pt-4 text-sm"
+          />
         </CardContent>
       </Card>
+
+      <NoteComments
+        eventId={event.id}
+        commentCount={noteStats[event.id]?.commentCount ?? 0}
+      />
 
       <OpenInClientDialog
         open={openInClientOpen}

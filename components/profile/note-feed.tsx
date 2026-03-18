@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useNostr } from "@/lib/nostr/context";
 import { NoteCard } from "@/components/note-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useNoteStats } from "@/hooks/use-note-stats";
 import { Loader2 } from "lucide-react";
 import type { NostrEvent, Profile } from "@/lib/nostr/utils";
 
@@ -51,6 +52,7 @@ export function NoteFeed({
   const [preferIngester, setPreferIngester] = useState(initialNotes.length > 0);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const noteStats = useNoteStats(notes.map((note) => note.id));
 
   const loadNotesFromIngester = useCallback(
     async (cursor: number, limit: number): Promise<IngesterProfileNotesResponse | null> => {
@@ -213,7 +215,12 @@ export function NoteFeed({
   return (
     <div className="space-y-3">
       {notes.map((note) => (
-        <NoteCard key={note.id} event={note} initialAuthor={initialAuthor} />
+        <NoteCard
+          key={note.id}
+          event={note}
+          engagement={noteStats[note.id]}
+          initialAuthor={initialAuthor}
+        />
       ))}
       
       {/* Infinite scroll trigger */}

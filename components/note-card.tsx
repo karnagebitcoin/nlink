@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useNostr } from "@/lib/nostr/context";
 import { useI18n } from "@/lib/i18n/context";
+import type { NoteEngagementStats } from "@/hooks/use-note-stats";
 import { toast } from "sonner";
 import {
   extractMedia,
@@ -31,13 +32,15 @@ import {
 import { EmbeddedNote } from "@/components/embedded-note";
 import { LinkPreview } from "@/components/link-preview";
 import { NoteContent } from "@/components/note-content";
+import { NoteStatsRow } from "@/components/note-stats-row";
 
 interface NoteCardProps {
   event: NostrEvent;
+  engagement?: NoteEngagementStats;
   initialAuthor?: Profile | null;
 }
 
-export function NoteCard({ event, initialAuthor = null }: NoteCardProps) {
+export function NoteCard({ event, engagement, initialAuthor = null }: NoteCardProps) {
   const { getCachedProfile, getProfile } = useNostr();
   const { t } = useI18n();
   // Try to get from cache immediately for instant display
@@ -251,6 +254,11 @@ export function NoteCard({ event, initialAuthor = null }: NoteCardProps) {
               ))}
             </div>
           )}
+
+          <NoteStatsRow
+            stats={engagement}
+            className="mt-3 border-t border-border/50 pt-3"
+          />
         </CardContent>
       </Card>
     </Link>
