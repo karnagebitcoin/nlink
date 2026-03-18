@@ -36,6 +36,11 @@ function uniqueNoteIds(noteIds: string[]): string[] {
   return Array.from(new Set(noteIds.filter(Boolean)));
 }
 
+function areStatsEqual(a: NoteEngagementStats | undefined, b: NoteEngagementStats | undefined): boolean {
+  return (a?.commentCount ?? 0) === (b?.commentCount ?? 0) &&
+    (a?.reactionCount ?? 0) === (b?.reactionCount ?? 0);
+}
+
 function buildBatchKey(noteIds: string[]): string {
   return [...noteIds].sort().join("|");
 }
@@ -175,13 +180,29 @@ async function fetchBatch(
 
 export function useNoteStats(noteIds: string[]): NoteStatsMap {
   const { query } = useNostr();
-  const ids = useMemo(() => uniqueNoteIds(noteIds), [noteIds]);
+  const noteIdsKey = useMemo(() => noteIds.filter(Boolean).join("|"), [noteIds]);
+  const ids = useMemo(() => uniqueNoteIds(noteIds), [noteIdsKey]);
   const idsKey = useMemo(() => ids.join("|"), [ids]);
   const [statsMap, setStatsMap] = useState<NoteStatsMap>(() => getCachedStats(ids));
 
   useEffect(() => {
-    setStatsMap((prev) => mergeStats(prev, getCachedStats(ids)));
-  }, [idsKey, ids]);
+    const cachedStats = getCachedStats(ids);
+
+    setStatsMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      ids.forEach((noteId) => {
+        const cached = cachedStats[noteId];
+        if (cached && !areStatsEqual(prev[noteId], cached)) {
+          next[noteId] = cached;
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+  }, [idsKey]);
 
   useEffect(() => {
     if (ids.length === 0) {
