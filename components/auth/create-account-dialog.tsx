@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { Loader2, Copy, Download, Check, AlertTriangle, Eye, EyeOff, Camera, Trash2, User } from "lucide-react";
+import { Loader2, Copy, Download, Check, Info, Eye, EyeOff, Camera, Trash2, User } from "lucide-react";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 import { nip19 } from "nostr-tools";
 import {
@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useNostr } from "@/lib/nostr/context";
 import { DEFAULT_BLOSSOM_RELAY, uploadBlobToBlossom } from "@/lib/nostr/blossom";
@@ -157,7 +157,7 @@ export function CreateAccountDialog({ open, onOpenChange, onSignIn }: CreateAcco
 
       setStep("keys");
       toast.success("Account created!", {
-        description: "Please save your private key securely.",
+        description: "Take a moment to save your private key somewhere safe.",
       });
     } catch (error) {
       toast.error("Failed to create account", {
@@ -239,7 +239,7 @@ Created: ${new Date().toISOString()}
   const handleClose = () => {
     if (step === "keys") {
       // Warn user before closing
-      if (!confirm("Have you saved your private key? You won't be able to recover it!")) {
+      if (!confirm("Before closing, make sure you've saved your private key somewhere safe. You'll need it to sign back in later.")) {
         return;
       }
     }
@@ -265,11 +265,11 @@ Created: ${new Date().toISOString()}
         <DialogHeader>
           <DialogTitle>
             {step === "form" && "Create Account"}
-            {step === "keys" && "Save Your Keys"}
+            {step === "keys" && "Save a Copy of Your Keys"}
           </DialogTitle>
           <DialogDescription>
             {step === "form" && "Create a new Nostr identity"}
-            {step === "keys" && "Store these securely - they cannot be recovered!"}
+            {step === "keys" && "Keep these somewhere safe so you can sign back in later."}
           </DialogDescription>
         </DialogHeader>
 
@@ -379,10 +379,11 @@ Created: ${new Date().toISOString()}
 
         {step === "keys" && keys && (
           <div className="space-y-4">
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
+            <Alert className="border-blue-200/80 bg-blue-50/80 text-blue-950 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-50 [&>svg]:text-blue-600 dark:[&>svg]:text-blue-300">
+              <Info className="h-4 w-4" />
+              <AlertTitle>Save your private key somewhere safe</AlertTitle>
               <AlertDescription>
-                Save your private key NOW! It cannot be recovered if lost.
+                This key is how you access this account. Download or copy it now so you have it when you need to sign in again.
               </AlertDescription>
             </Alert>
 
