@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MoreHorizontal, Copy, Link2, User, FileText } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,9 +21,10 @@ import { toast } from "sonner";
 import {
   extractMedia,
   formatTimestamp,
+  getParentEventId,
+  parseNostrUris,
   stripUrls,
   stripNostrUris,
-  parseNostrUris,
   toNevent,
   toNpub,
   shortenNpub,
@@ -32,6 +34,7 @@ import {
 import { EmbeddedNote } from "@/components/embedded-note";
 import { LinkPreview } from "@/components/link-preview";
 import { NoteContent } from "@/components/note-content";
+import { ParentNotePreview } from "@/components/parent-note-preview";
 import { NoteStatsRow } from "@/components/note-stats-row";
 
 interface NoteCardProps {
@@ -41,6 +44,7 @@ interface NoteCardProps {
 }
 
 export function NoteCard({ event, engagement, initialAuthor = null }: NoteCardProps) {
+  const router = useRouter();
   const { getCachedProfile, getProfile } = useNostr();
   const { t } = useI18n();
   // Try to get from cache immediately for instant display
@@ -50,6 +54,7 @@ export function NoteCard({ event, engagement, initialAuthor = null }: NoteCardPr
   const noteUris = nostrUris.filter((uri) => uri.type === "note" || uri.type === "nevent");
   const textContent = stripNostrUris(stripUrls(event.content));
   const neventId = toNevent(event.id);
+  const parentEventId = getParentEventId(event);
   const displayName = author?.display_name || author?.name || shortenNpub(toNpub(event.pubkey));
 
   useEffect(() => {
@@ -153,6 +158,18 @@ export function NoteCard({ event, engagement, initialAuthor = null }: NoteCardPr
           </div>
 
           {/* Text content with inline mentions */}
+          {parentEventId && (
+            <ParentNotePreview
+              className="mb-2"
+              eventId={parentEventId}
+              onClick={(previewEvent) => {
+                previewEvent.preventDefault();
+                previewEvent.stopPropagation();
+                router.push(`/${toNevent(parentEventId)}`);
+              }}
+            />
+          )}
+
           <NoteContent content={event.content} className="text-sm leading-relaxed" />
 
           {/* Embedded notes */}

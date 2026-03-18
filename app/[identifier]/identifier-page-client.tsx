@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { ExternalLink, ArrowLeft, MoreHorizontal, Copy, Link2, User, FileText } from "lucide-react";
 import { useNostr } from "@/lib/nostr/context";
 import { useI18n } from "@/lib/i18n/context";
@@ -25,12 +26,14 @@ import { LinkPreview } from "@/components/link-preview";
 import { NoteScreenshot } from "@/components/note-screenshot";
 import { NoteContent } from "@/components/note-content";
 import { NoteComments } from "@/components/note-comments";
+import { ParentNotePreview } from "@/components/parent-note-preview";
 import { NoteStatsRow } from "@/components/note-stats-row";
 import { toast } from "sonner";
 import { useNoteStats } from "@/hooks/use-note-stats";
 import {
   extractMedia,
   formatTimestamp,
+  getParentEventId,
   stripUrls,
   toNpub,
   toNevent,
@@ -149,6 +152,7 @@ function NoteView({
   initialEvent: NostrEvent | null;
   nevent: string;
 }) {
+  const router = useRouter();
   const { getEvent, getCachedEvent, getCachedProfile, getProfile } = useNostr();
   const { t } = useI18n();
   const [event, setEvent] = useState<NostrEvent | null>(initialEvent);
@@ -242,6 +246,7 @@ function NoteView({
 
   const { images, videos, youtube, audio, links } = extractMedia(event.content);
   const textContent = stripUrls(event.content);
+  const parentEventId = getParentEventId(event);
   const displayName = author?.display_name || author?.name || shortenNpub(toNpub(event.pubkey));
   const fullNevent = nevent.startsWith("nevent1") ? nevent : toNevent(event.id);
 
@@ -364,6 +369,18 @@ function NoteView({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+
+          {parentEventId && (
+            <ParentNotePreview
+              className="mb-3"
+              eventId={parentEventId}
+              onClick={(previewEvent) => {
+                previewEvent.preventDefault();
+                previewEvent.stopPropagation();
+                router.push(`/${toNevent(parentEventId)}`);
+              }}
+            />
+          )}
 
           <NoteContent content={event.content} className="text-base leading-relaxed" />
 
