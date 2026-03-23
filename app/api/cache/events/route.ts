@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { persistEventsInServerCache } from "@/lib/nostr/server";
+import { mirrorEventsToServerDatabase, persistEventsInServerCache } from "@/lib/nostr/server";
 import type { NostrEvent } from "@/lib/nostr/utils";
 
 export const runtime = "nodejs";
@@ -33,6 +33,7 @@ export async function POST(request: Request) {
     }
 
     persistEventsInServerCache(events);
+    await mirrorEventsToServerDatabase(events);
 
     return NextResponse.json({ cached: events.length, ok: true });
   } catch {

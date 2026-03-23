@@ -3,6 +3,11 @@ import { isBlobMirrorEnabled } from "./blob-cache.mjs";
 import { config } from "./config.mjs";
 import { startHttpServer } from "./http-server.mjs";
 import { NostrIngester } from "./nostr-ingester.mjs";
+import WebSocket from "ws";
+
+if (typeof globalThis.WebSocket === "undefined") {
+  globalThis.WebSocket = WebSocket;
+}
 
 const ingester = new NostrIngester();
 let server;

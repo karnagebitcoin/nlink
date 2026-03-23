@@ -130,6 +130,34 @@ export async function saveProfileEvent(event, metadata, relayUrl) {
   return true;
 }
 
+export async function saveProfileMetadata(pubkey, metadata, relayUrl, updatedAt = new Date().toISOString()) {
+  const normalizedPubkey = normalizePubkey(pubkey);
+  const existing = getStoredProfile(normalizedPubkey);
+
+  if (existing?.updatedAt && String(existing.updatedAt) >= String(updatedAt)) {
+    return false;
+  }
+
+  db.transactionSync(() => {
+    db.putSync(`${PROFILE_KEY_PREFIX}${normalizedPubkey}`, {
+      event: existing?.event ?? null,
+      metadata,
+      relayUrl: relayUrl ?? existing?.relayUrl ?? null,
+      updatedAt,
+    });
+
+    const stats = getStats();
+    db.putSync(STATS_KEY, {
+      ...stats,
+      profileCount: existing ? stats.profileCount : stats.profileCount + 1,
+      totalCount: stats.noteCount + (existing ? stats.profileCount : stats.profileCount + 1),
+      updatedAt: new Date().toISOString(),
+    });
+  });
+
+  return true;
+}
+
 export function getEventById(id) {
   return getStoredEvent(id)?.event ?? null;
 }

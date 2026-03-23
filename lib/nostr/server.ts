@@ -5,6 +5,7 @@ import {
   getIngesterEvent,
   getIngesterProfile,
   getIngesterProfileNotes,
+  ingestIngesterEvents,
 } from "@/lib/nostr/ingester";
 import { parseProfile, type NostrEvent, type Profile } from "@/lib/nostr/utils";
 
@@ -134,7 +135,7 @@ function getBlobStore() {
   }
 }
 
-async function readCache<T>(key: string): Promise<T | null | undefined> {
+function readMemoryCache<T>(key: string): T | null | undefined {
   const memoryValue = memoryCache.get(key);
   if (memoryValue) {
     if (memoryValue.expiresAt === null || memoryValue.expiresAt > Date.now()) {
@@ -142,6 +143,15 @@ async function readCache<T>(key: string): Promise<T | null | undefined> {
     }
 
     memoryCache.delete(key);
+  }
+
+  return undefined;
+}
+
+async function readBlobCache<T>(key: string): Promise<T | null | undefined> {
+  const memoryValue = readMemoryCache<T>(key);
+  if (memoryValue !== undefined) {
+    return memoryValue;
   }
 
   const store = getBlobStore();
@@ -204,6 +214,22 @@ export function persistEventsInServerCache(events: NostrEvent[]): void {
   }
 }
 
+export async function mirrorEventsToServerDatabase(events: NostrEvent[]): Promise<void> {
+  const uniqueEvents = Array.from(
+    new Map(
+      events
+        .filter((event) => event?.id)
+        .map((event) => [event.id, event] as const),
+    ).values(),
+  );
+
+  if (uniqueEvents.length === 0) {
+    return;
+  }
+
+  await ingestIngesterEvents(uniqueEvents);
+}
+
 async function queryRelays(relays: string[], filter: Filter, maxWait = 1200): Promise<NostrEvent[]> {
   const uniqueRelays = combineRelays(relays);
   if (uniqueRelays.length === 0) {
@@ -241,6 +267,32 @@ async function fetchEventFromIngesterOrRelays(
   return fetchEventFromRelays(eventId, relayHints);
 }
 
+export async function getServerEventById(
+  eventId: string,
+  relayHints: string[] = [],
+): Promise<NostrEvent | null> {
+  const cacheKey = `event:${eventId}`;
+  const cachedEvent = readMemoryCache<NostrEvent>(cacheKey);
+  if (cachedEvent !== undefined) {
+    return cachedEvent;
+  }
+
+  const ingesterEvent = await getIngesterEvent(eventId);
+  if (ingesterEvent) {
+    persistEventsInServerCache([ingesterEvent]);
+    return ingesterEvent;
+  }
+
+  const blobCachedEvent = await readBlobCache<NostrEvent>(cacheKey);
+  if (blobCachedEvent !== undefined) {
+    return blobCachedEvent;
+  }
+
+  const event = await fetchEventFromRelays(eventId, relayHints);
+  writeCache(cacheKey, event, event ? EVENT_CACHE_TTL : NEGATIVE_CACHE_TTL);
+  return event;
+}
+
 async function fetchProfileBatchFromRelays(pubkeys: string[]): Promise<Map<string, Profile | null>> {
   const missingPubkeys = pubkeys.filter(isHex64);
   const result = new Map<string, Profile | null>();
@@ -276,7 +328,7 @@ async function fetchProfileBatchFromRelays(pubkeys: string[]): Promise<Map<strin
 
 async function fetchProfileFromCacheOrRelays(pubkey: string): Promise<Profile | null> {
   const cacheKey = `profile:${pubkey}`;
-  const cached = await readCache<Profile>(cacheKey);
+  const cached = readMemoryCache<Profile>(cacheKey);
   if (cached !== undefined) {
     return cached;
   }
@@ -287,10 +339,19 @@ async function fetchProfileFromCacheOrRelays(pubkey: string): Promise<Profile | 
     return ingesterProfile;
   }
 
+  const blobCached = await readBlobCache<Profile>(cacheKey);
+  if (blobCached !== undefined) {
+    return blobCached;
+  }
+
   const profileMap = await fetchProfileBatchFromRelays([pubkey]);
   const profile = profileMap.get(pubkey) ?? null;
   writeCache(cacheKey, profile, profile ? PROFILE_CACHE_TTL : NEGATIVE_CACHE_TTL);
   return profile;
+}
+
+export async function getServerProfileByPubkey(pubkey: string): Promise<Profile | null> {
+  return fetchProfileFromCacheOrRelays(pubkey);
 }
 
 async function fetchProfilesFromCacheOrRelays(pubkeys: string[]): Promise<Map<string, Profile | null>> {
@@ -299,7 +360,7 @@ async function fetchProfilesFromCacheOrRelays(pubkeys: string[]): Promise<Map<st
   const missing: string[] = [];
 
   for (const pubkey of uniquePubkeys) {
-    const cached = await readCache<Profile>(`profile:${pubkey}`);
+    const cached = readMemoryCache<Profile>(`profile:${pubkey}`);
     if (cached !== undefined) {
       profileMap.set(pubkey, cached);
     } else {
@@ -322,11 +383,22 @@ async function fetchProfilesFromCacheOrRelays(pubkeys: string[]): Promise<Map<st
       }
     }
 
-    const fetched = missingFromRelays.length > 0
-      ? await fetchProfileBatchFromRelays(missingFromRelays)
-      : new Map<string, Profile | null>();
+    const missingAfterBlobs: string[] = [];
 
     for (const pubkey of missingFromRelays) {
+      const cached = await readBlobCache<Profile>(`profile:${pubkey}`);
+      if (cached !== undefined) {
+        profileMap.set(pubkey, cached);
+      } else {
+        missingAfterBlobs.push(pubkey);
+      }
+    }
+
+    const fetched = missingAfterBlobs.length > 0
+      ? await fetchProfileBatchFromRelays(missingAfterBlobs)
+      : new Map<string, Profile | null>();
+
+    for (const pubkey of missingAfterBlobs) {
       const profile = fetched.get(pubkey) ?? null;
       profileMap.set(pubkey, profile);
       writeCache(`profile:${pubkey}`, profile, profile ? PROFILE_CACHE_TTL : NEGATIVE_CACHE_TTL);
@@ -341,7 +413,7 @@ async function fetchRecentNotesForProfile(
   limit = INITIAL_PROFILE_NOTES_LIMIT,
 ): Promise<CachedNoteList> {
   const cacheKey = `notes:${pubkey}:${limit}`;
-  const cached = await readCache<CachedNoteList>(cacheKey);
+  const cached = readMemoryCache<CachedNoteList>(cacheKey);
   if (cached !== undefined) {
     return cached ?? { hasMore: false, notes: [] };
   }
@@ -357,6 +429,11 @@ async function fetchRecentNotesForProfile(
 
     writeCache(cacheKey, result, NOTE_LIST_CACHE_TTL);
     return result;
+  }
+
+  const blobCached = await readBlobCache<CachedNoteList>(cacheKey);
+  if (blobCached !== undefined) {
+    return blobCached ?? { hasMore: false, notes: [] };
   }
 
   const events = await queryRelays(
@@ -445,10 +522,23 @@ const getCachedNotePageData = unstable_cache(
     }
 
     const cacheKey = `event:${resolved.eventId}`;
-    const cachedEvent = await readCache<NostrEvent>(cacheKey);
-    const event = cachedEvent !== undefined
-      ? cachedEvent
-      : await fetchEventFromIngesterOrRelays(resolved.eventId, resolved.relayHints);
+    const cachedEvent = readMemoryCache<NostrEvent>(cacheKey);
+    let event = cachedEvent;
+
+    if (event === undefined) {
+      event = await getIngesterEvent(resolved.eventId);
+      if (event) {
+        persistEventsInServerCache([event]);
+      }
+    }
+
+    if (event === undefined) {
+      event = await readBlobCache<NostrEvent>(cacheKey);
+    }
+
+    if (event === undefined) {
+      event = await fetchEventFromRelays(resolved.eventId, resolved.relayHints);
+    }
 
     if (cachedEvent === undefined) {
       writeCache(cacheKey, event, event ? EVENT_CACHE_TTL : NEGATIVE_CACHE_TTL);

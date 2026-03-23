@@ -39,6 +39,12 @@ interface IngesterSearchProfilesResponse {
   results: ProfileSearchResult[];
 }
 
+interface IngesterIngestEventsResponse {
+  ignored: number;
+  inserted: number;
+  ok: boolean;
+}
+
 function createSignal() {
   return AbortSignal.timeout(INGESTER_REQUEST_TIMEOUT_MS);
 }
@@ -51,6 +57,32 @@ async function fetchIngesterJson<T>(pathname: string): Promise<T | null> {
   try {
     const response = await fetch(`${baseUrl}${pathname}`, {
       cache: "no-store",
+      signal: createSignal(),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function postIngesterJson<T>(pathname: string, body: unknown): Promise<T | null> {
+  if (!baseUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      body: JSON.stringify(body),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
       signal: createSignal(),
     });
 
@@ -117,4 +149,19 @@ export async function searchIngesterProfiles(query: string, limit = 10): Promise
   );
 
   return response?.results ?? null;
+}
+
+export async function ingestIngesterEvents(events: NostrEvent[]): Promise<IngesterIngestEventsResponse | null> {
+  const noteEvents = events.filter((event) => event.kind === 1).slice(0, 100);
+  if (noteEvents.length === 0) {
+    return {
+      ignored: 0,
+      inserted: 0,
+      ok: true,
+    };
+  }
+
+  return postIngesterJson<IngesterIngestEventsResponse>("/events", {
+    events: noteEvents,
+  });
 }

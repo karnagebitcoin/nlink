@@ -179,6 +179,70 @@ async function saveEventToDB(event: NostrEvent): Promise<void> {
   }
 }
 
+async function fetchServerEvent(eventId: string): Promise<NostrEvent | null> {
+  try {
+    const searchParams = new URLSearchParams({
+      id: eventId,
+    });
+    const response = await fetch(`/api/event?${searchParams.toString()}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as { event?: NostrEvent | null };
+    return data.event ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchServerProfile(pubkey: string): Promise<ProfileData | null> {
+  try {
+    const searchParams = new URLSearchParams({
+      pubkey,
+    });
+    const response = await fetch(`/api/profile?${searchParams.toString()}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as { profile?: ProfileData | null };
+    return data.profile ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchServerProfiles(pubkeys: string[]): Promise<Record<string, ProfileData | null>> {
+  if (pubkeys.length === 0) {
+    return {};
+  }
+
+  try {
+    const searchParams = new URLSearchParams({
+      pubkeys: pubkeys.join(","),
+    });
+    const response = await fetch(`/api/profiles?${searchParams.toString()}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return {};
+    }
+
+    const data = (await response.json()) as { profiles?: Record<string, ProfileData | null> };
+    return data.profiles ?? {};
+  } catch {
+    return {};
+  }
+}
+
 export function NostrProvider({ children }: { children: React.ReactNode }) {
   const [signer, setSigner] = useState<NostrSigner | null>(null);
   const [currentUser, setCurrentUser] = useState<{ pubkey: string } | null>(null);
@@ -462,6 +526,12 @@ export function NostrProvider({ children }: { children: React.ReactNode }) {
     }
 
     const fetchPromise = (async (): Promise<NostrEvent | null> => {
+      const serverEvent = await fetchServerEvent(eventId);
+      if (serverEvent) {
+        cacheEvent(serverEvent);
+        return serverEvent;
+      }
+
       const dbCached = await getEventFromDB(eventId);
       if (dbCached && Date.now() - dbCached.timestamp < CACHE_TTL) {
         eventCacheRef.current.set(eventId, { event: dbCached.event, timestamp: dbCached.timestamp });
@@ -514,6 +584,13 @@ export function NostrProvider({ children }: { children: React.ReactNode }) {
 
     // Create new request
     const fetchPromise = (async (): Promise<ProfileData | null> => {
+      const serverProfile = await fetchServerProfile(pubkey);
+      if (serverProfile) {
+        profileCacheRef.current.set(pubkey, { profile: serverProfile, timestamp: Date.now() });
+        saveToDB(pubkey, serverProfile);
+        return serverProfile;
+      }
+
       // Check IndexedDB
       const dbCached = await getFromDB(pubkey);
       if (dbCached && Date.now() - dbCached.timestamp < CACHE_TTL) {
@@ -597,9 +674,24 @@ export function NostrProvider({ children }: { children: React.ReactNode }) {
 
     if (needsFetch.length === 0) return;
 
+    const serverProfiles = await fetchServerProfiles(needsFetch);
+    const stillNeedsFetch: string[] = [];
+
+    needsFetch.forEach((pk) => {
+      const profile = serverProfiles[pk];
+      if (profile) {
+        profileCacheRef.current.set(pk, { profile, timestamp: Date.now() });
+        saveToDB(pk, profile);
+      } else {
+        stillNeedsFetch.push(pk);
+      }
+    });
+
+    if (stillNeedsFetch.length === 0) return;
+
     // Batch fetch from relays
     try {
-      const events = await query([{ kinds: [0], authors: needsFetch }]);
+      const events = await query([{ kinds: [0], authors: stillNeedsFetch }]);
       for (const event of events) {
         try {
           const profile = JSON.parse(event.content) as ProfileData;
