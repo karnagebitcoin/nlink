@@ -48,6 +48,7 @@ export class NostrIngester {
   #pendingProfiles = new Set();
   #pruneInFlight = false;
   #pruneInterval = null;
+  #profileCursor = Number(getState("profiles_cursor") ?? Math.floor(Date.now() / 1000));
   #reconnectTimeout = null;
   #relay = null;
   #running = false;
@@ -103,6 +104,7 @@ export class NostrIngester {
       this.#relay = relay;
       console.log("[ingester] relay connected");
       this.#subscribeToLiveNotes();
+      this.#subscribeToLiveProfiles();
       this.#startBackfillLoop();
     } catch (error) {
       console.error("[ingester] failed to connect to relay", error);
@@ -159,6 +161,32 @@ export class NostrIngester {
     );
   }
 
+  #subscribeToLiveProfiles() {
+    if (!this.#relay) {
+      return;
+    }
+
+    const since = Math.max(0, this.#profileCursor - config.cursorOverlapSeconds);
+    console.log(`[ingester] subscribing to kind 0 profiles since ${since}`);
+
+    this.#relay.subscribe(
+      [{ kinds: [0], since }],
+      {
+        eoseTimeout: 4_000,
+        id: "live-profiles",
+        oneose: () => {
+          console.log("[ingester] caught up to the live profile stream");
+        },
+        onevent: (event) => {
+          void this.#handleProfileEvent(event);
+        },
+        onclose: (reason) => {
+          console.warn(`[ingester] live profile subscription closed: ${reason}`);
+        },
+      },
+    );
+  }
+
   async #handleNoteEvent(event, { mode = "live" } = {}) {
     if (event.kind !== 1 || event.created_at < this.#getRetentionCutoff()) {
       return false;
@@ -184,6 +212,40 @@ export class NostrIngester {
       });
       void this.#ensureProfile(event.pubkey);
     }
+
+    return true;
+  }
+
+  async #handleProfileEvent(event, { mode = "live" } = {}) {
+    if (event.kind !== 0 || event.created_at < this.#getRetentionCutoff()) {
+      return false;
+    }
+
+    const metadata = parseProfile(event.content);
+    const inserted = await saveProfileEvent(
+      event,
+      metadata,
+      config.relayUrl,
+    );
+
+    if (mode === "live" && event.created_at > this.#profileCursor) {
+      this.#profileCursor = event.created_at;
+      await setState("profiles_cursor", this.#profileCursor);
+    }
+
+    if (!inserted) {
+      return false;
+    }
+
+    if (mode === "live") {
+      console.log(`[ingester] saved live profile metadata for ${event.pubkey}`);
+    }
+
+    this.#queueBlobMirror(async () => {
+      await mirrorProfileToBlobs(event.pubkey, metadata);
+      await upsertProfileSearchEntry(event.pubkey, metadata);
+      await mirrorStatsToBlobs(getStats());
+    });
 
     return true;
   }
@@ -377,18 +439,10 @@ export class NostrIngester {
     }
 
     if (latestEvent) {
-      const metadata = parseProfile(latestEvent.content);
-      await saveProfileEvent(
-        latestEvent,
-        metadata,
-        config.relayUrl,
-      );
-      console.log(`[ingester] saved profile metadata for ${normalizedPubkey}`);
-      this.#queueBlobMirror(async () => {
-        await mirrorProfileToBlobs(normalizedPubkey, metadata);
-        await upsertProfileSearchEntry(normalizedPubkey, metadata);
-        await mirrorStatsToBlobs(getStats());
-      });
+      const inserted = await this.#handleProfileEvent(latestEvent, { mode: "fetch" });
+      if (inserted) {
+        console.log(`[ingester] saved profile metadata for ${normalizedPubkey}`);
+      }
     }
   }
 
